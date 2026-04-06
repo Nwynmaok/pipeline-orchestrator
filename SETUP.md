@@ -108,6 +108,26 @@ Open the **Schedule** tab in the sidebar, then create each of the 7 tasks below.
 | Permission Mode | Auto |
 | Prompt | Contents of `prompts/qa.md` |
 
+### Task 8: Telegram Reply Poller
+
+| Field | Value |
+|---|---|
+| Name | pipeline-telegram-poll |
+| Description | Poll Telegram for Nathan's replies, resolve needs-clarification files |
+| Model | claude-sonnet-4-6 |
+| Frequency | Custom — every 5 minutes: `*/5 * * * *` |
+| Working Folder | `/Users/wynclaw/projects/pipeline-orchestrator` |
+| Permission Mode | Auto |
+| Prompt | Contents of `prompts/telegram-poll.md` |
+
+This task polls Telegram for replies to sync messages. When Nathan replies with a clarification:
+1. The script identifies which project has a `needs-clarification.md`
+2. Writes Nathan's reply to `context-{slug}.md` in that project directory
+3. Deletes `needs-clarification.md` to unblock the pipeline
+4. Sends a confirmation message back to Telegram
+
+If multiple projects need clarification, the bot asks Nathan which project the reply is for.
+
 ### DevOps (no scheduled task)
 
 DevOps is manual-only. When the coordinator flags a project as ready for deploy, kick it manually:
@@ -134,7 +154,7 @@ In addition to the scheduled tasks, you can set up a **Cowork task** that runs t
 
 ## Step 3: First Run Test
 
-After creating all 7 tasks:
+After creating all 8 tasks:
 
 1. Click each task and hit **Run now** to trigger an immediate test run
 2. Watch the session output — each agent should scan the pipeline directory and either find work or report "no work found"

@@ -37,6 +37,7 @@ This is not a redesign of the pipeline's conventions. The pipeline's state machi
 - As Nathan, I want agents to accumulate rules in RULES.md that get injected into their system prompts so they improve over time and don't repeat past mistakes.
 - As Nathan, I want XP events logged and skill levels tracked so I can see which agents are performing well and which need attention.
 - As Nathan, I want the deploy stage to remain manual — the coordinator flags me, I decide when to deploy.
+- As Nathan, I want to reply to Telegram sync messages with clarifications so the orchestrator writes my answers to a context file and unblocks the pipeline without me needing to SSH into the Mac Mini or edit files manually.
 
 ---
 
@@ -123,6 +124,20 @@ This is not a redesign of the pipeline's conventions. The pipeline's state machi
 - [ ] Same format as current: `🔄 Pipeline Sync — {time} PT` with project status blocks and `⚠️ Needs Your Input` section
 - [ ] Escalation hygiene: only surface items where Nathan needs to act right now to unblock the pipeline (RULE-001)
 
+#### Telegram Reply Handler (Baseline — Option B)
+- [ ] Orchestrator listens for incoming Telegram messages via Bot API long polling
+- [ ] When Nathan replies to a sync message, the orchestrator parses the reply and writes a context-{slug}.md to the relevant project directory
+- [ ] The orchestrator deletes the needs-clarification.md file to mark it resolved
+- [ ] If the reply doesn't clearly map to a single project (ambiguous), the orchestrator responds asking which project the clarification is for
+- [ ] Replies that don't relate to a needs-clarification are ignored (the bot is not a general chatbot)
+
+#### Conversational Coordinator via Telegram (Follow-up — Option C)
+- [ ] Telegram replies are routed to the coordinator agent as a Claude API call with conversation history
+- [ ] The coordinator can ask follow-up questions before writing the context file
+- [ ] The coordinator updates TRACKER.md with any decisions made during the conversation
+- [ ] Conversation history for Telegram interactions is persisted so multi-turn clarification works
+- [ ] The coordinator can proactively suggest scope changes (e.g. "should this be a Phase 2 feature?") based on the clarification
+
 ### CLI Interface
 - [ ] `pipeline status` — show DASHBOARD.md contents
 - [ ] `pipeline start {project-name}` — create project directory with TRACKER.md and PHASE.md, trigger PM
@@ -148,6 +163,8 @@ This is not a redesign of the pipeline's conventions. The pipeline's state machi
 - Staleness detection (coordinator prompt logic)
 - Pipeline Quest XP tracking (helper script called by agents)
 - Telegram sync delivery (helper script called by coordinator)
+- Telegram reply handler for needs-clarification resolution
+- Conversational coordinator via Telegram (Option C) — follow-up enhancement after baseline is working
 - Lightweight CLI scripts for status, start, kick, stats, logs
 - Helper scripts for validation, XP logging, Telegram delivery
 - A shared `CLAUDE.md` encoding pipeline conventions and rules
@@ -186,6 +203,7 @@ This is not a redesign of the pipeline's conventions. The pipeline's state machi
 2. **Cloud vs Desktop scheduled tasks:** Cloud tasks run on Anthropic infrastructure (machine doesn't need to be on, but gets a fresh clone — no local filesystem access). Desktop tasks run locally (full filesystem access, but machine must be running). The pipeline needs filesystem access to the shared pipeline directory — **desktop scheduled tasks or a synced repo** may be required.
 3. **Event-driven triggers:** Should event-driven handoffs be implemented? If so, a lightweight file-watcher daemon or Claude Code hook could trigger `claude` CLI runs on artifact changes. This adds some infrastructure but speeds up the pipeline.
 4. **Validation approach:** Should validation be purely prompt-based (agent self-validates), script-based (helper scripts check structure), or hybrid? Prompt-based is simplest but less deterministic. Script-based is reliable but requires maintenance.
+5. **Telegram bot mode:** Should the orchestrator use long polling or webhooks for incoming messages? Long polling is simpler (no public endpoint needed), webhooks are more responsive but require Tailscale Funnel or a public URL.
 
 ---
 
