@@ -2,25 +2,28 @@
 **Project:** pipeline-orchestrator
 **Author:** Nathan + Claude (ported from 11-project OpenClaw pipeline)
 **Date:** 2026-04-05
+**Updated:** 2026-04-06
 **Status:** Draft
 
 ---
 
 ## Problem Statement
 
-Nathan runs an automated multi-agent development pipeline that has shipped 11 projects across multiple phases. The pipeline currently runs on OpenClaw, which has lost Claude API access via OAuth. The entire system — 8 specialized agents, cron-driven automation, review cycles, multi-phase project management, and a gamified skill-tracking layer — needs to be ported to a self-hosted Node.js service that calls the Claude API directly.
+Nathan runs an automated multi-agent development pipeline that has shipped 11 projects across multiple phases. The pipeline currently runs on OpenClaw, which has lost Claude API access via OAuth. The entire system — 8 specialized agents, cron-driven automation, review cycles, multi-phase project management, and a gamified skill-tracking layer — needs to be ported to a new execution model.
 
-This is not a redesign. The pipeline's conventions, state machines, and accumulated rules have been battle-tested over 3 weeks and 11 projects. The goal is a faithful port with targeted improvements.
+Rather than building a self-hosted Node.js daemon that calls the Claude API directly (incurring per-token API costs), the pipeline will use **Claude Code scheduled tasks** as the execution engine. Each agent becomes a Claude Code scheduled task that runs on a cron schedule, reads pipeline state from the filesystem, and writes artifacts directly — leveraging Claude Code's native file I/O instead of custom response parsing. This eliminates API billing entirely (usage is covered by the Claude plan) and removes the need for a persistent daemon process.
+
+This is not a redesign of the pipeline's conventions. The pipeline's state machines, artifact naming, review cycles, and accumulated rules have been battle-tested over 3 weeks and 11 projects. The goal is a faithful port with a simpler, cheaper execution model.
 
 ---
 
 ## Goals & Success Metrics
 
 - **Goal 1: Feature parity with OpenClaw pipeline** → All 11 existing project directories continue to work. A new project kicked off on the new orchestrator produces the same artifact flow as OpenClaw did.
-- **Goal 2: Zero-dependency on OpenClaw** → The orchestrator runs standalone on Nathan's Mac Mini using only Node.js, the Claude API, and the filesystem. No OpenClaw, no third-party orchestration framework.
-- **Goal 3: Reduced token waste** → Event-driven handoffs replace blind polling. Validation gates catch bad artifacts before they advance. Target: 50%+ reduction in wasted API calls vs OpenClaw cron polling.
-- **Goal 4: Preserve accumulated intelligence** → All RULES.md content, CONVENTIONS.md, XP history, and learned behaviors carry over. Agent system prompts include their rules.
-- **Goal 5: Operational continuity** → The orchestrator runs as a daemon (PM2 or launchd), survives reboots, and delivers sync messages to Telegram on the same schedule.
+- **Goal 2: Zero API cost** → By using Claude Code scheduled tasks instead of direct Claude API calls, agent runs are covered by the existing Claude plan. No per-token API billing. No `ANTHROPIC_API_KEY` required for agent execution.
+- **Goal 3: Zero-infrastructure** → No persistent daemon, no PM2, no Node.js service to maintain. Claude Code scheduled tasks handle scheduling and execution. Lightweight helper scripts handle validation, XP tracking, and Telegram delivery.
+- **Goal 4: Preserve accumulated intelligence** → All RULES.md content, CONVENTIONS.md, XP history, and learned behaviors carry over. Agent prompts (defined in scheduled task configurations) include their rules.
+- **Goal 5: Operational continuity** → Agents run on the same schedule (coordinator on even hours, work agents on odd hours). Coordinator sync messages still deliver to Telegram.
 
 ---
 
@@ -40,25 +43,27 @@ This is not a redesign. The pipeline's conventions, state machines, and accumula
 ## Acceptance Criteria
 
 ### Core Orchestrator
-- [ ] Node.js service runs as a persistent daemon on the Mac Mini (PM2 or launchd)
-- [ ] Calls Claude API directly (no OpenClaw, no third-party wrapper) with per-agent model selection (Sonnet default, Opus for architect + reviewer)
-- [ ] Uses Haiku for validation gates and pre-checks to minimize cost
+- [ ] Each agent is a **Claude Code scheduled task** running on its own cron schedule
+- [ ] No persistent daemon process — Claude Code handles scheduling and execution
+- [ ] Claude Code reads/writes files directly using its native tools (no `<<<WRITE_FILE>>>` parsing, no custom response handling)
 - [ ] Reads/writes to the existing shared pipeline directory at `/Users/wynclaw/.openclaw/shared/pipeline/` (or a configurable path)
-- [ ] CONVENTIONS.md is injected into every agent's system prompt
-- [ ] Agent RULES.md content is injected into the owning agent's system prompt
-- [ ] Conversation history is persisted per-agent so context carries across sessions
+- [ ] A shared `CLAUDE.md` in the pipeline directory injects CONVENTIONS.md content and shared pipeline rules into every agent session
+- [ ] Per-agent `CLAUDE.md` files (or rules files referenced in the task prompt) inject agent-specific RULES.md content
+- [ ] Claude Code manages its own conversation context per session — no custom conversation store needed
 
 ### Scheduling
-- [ ] Cron-based scheduling matching the current pattern: coordinator on even hours (0, 12, 14, 16, 18, 20, 22 PT), agents on odd hours (13, 15, 17, 19, 21, 23 PT)
+- [ ] Each agent has its own **Claude Code scheduled task** with a cron expression
+- [ ] Coordinator: `0 0,12,14,16,18,20,22 * * *` PT (even hours, 12 PM – 12 AM)
+- [ ] Work agents (pm, architect, backend, frontend, reviewer, qa): `0 13,15,17,19,21,23 * * *` PT (odd hours)
 - [ ] Schedule window: 12 PM – 12 AM Pacific daily
-- [ ] Each agent run uses the exact cron prompt logic from the OpenClaw export (pre-checks, multi-condition triggers, phase awareness)
-- [ ] Optional: event-driven mode where file changes trigger the next agent immediately instead of waiting for the next cron window
+- [ ] Each agent's task prompt includes its trigger conditions — Claude Code evaluates them by reading pipeline state and skips if no work is needed (replaces Haiku pre-check)
+- [ ] Optional: event-driven dispatch via Claude Code hooks or file-watching scripts that trigger `claude` CLI runs on artifact changes
 
 ### Agent System
-- [ ] 8 agents defined: coordinator, pm, architect, frontend, backend, reviewer, qa, devops
-- [ ] Each agent has a system prompt composed of: base persona (SOUL.md equivalent) + operating instructions (AGENTS.md equivalent) + CONVENTIONS.md + RULES.md + project context
-- [ ] Agent model assignment: Sonnet 4-6 for coordinator, pm, frontend, backend, qa, devops; Opus 4-6 for architect and reviewer
-- [ ] Haiku 4-5 for validation gates and pre-check "is there work?" scans
+- [ ] 8 agents defined as Claude Code scheduled tasks: coordinator, pm, architect, frontend, backend, reviewer, qa, devops
+- [ ] Each agent's scheduled task prompt includes: persona, operating instructions, trigger conditions, output format requirements, and references to CONVENTIONS.md and RULES.md (read from disk at runtime via CLAUDE.md)
+- [ ] Claude Code model selection is configured per scheduled task (Sonnet for most agents, Opus for architect and reviewer)
+- [ ] Pre-check logic is embedded in the agent prompt itself — "First, check if you have work to do. If not, report that and exit." — no separate Haiku call needed
 
 ### Pipeline Stages (must match OpenClaw behavior exactly)
 - [ ] 7-stage flow: Requirements → Design → Implementation → Review → QA → Deploy → Complete
@@ -91,18 +96,18 @@ This is not a redesign. The pipeline's conventions, state machines, and accumula
 - [ ] TDD validation: references the PRD filename, has Architecture, Data Model, API Contract, Task Breakdown sections
 - [ ] Review validation: contains exactly one of the four verdict strings
 - [ ] QA validation: testplan traces back to PRD acceptance criteria
-- [ ] Validation runs on Haiku before advancing to the next stage
+- [ ] Validation is performed by the agent itself as part of its task prompt ("After writing, verify your output meets these structural requirements") and/or by lightweight helper scripts that Claude Code runs post-write
 - [ ] Failed validation writes a `context-{slug}.md` with specific feedback and routes back to the owning agent
 
 ### Event-Driven Handoffs (new — not in OpenClaw)
-- [ ] `fs.watch` monitors the shared pipeline directory for new/modified files
-- [ ] When an agent writes an artifact, the orchestrator detects the change and can optionally dispatch the next agent immediately (instead of waiting for the next cron window)
-- [ ] Configurable: `mode: "cron"` (OpenClaw-compatible polling) or `mode: "event"` (immediate dispatch) or `mode: "hybrid"` (events during active hours, cron as fallback)
+- [ ] Optional: a lightweight file-watcher script (or Claude Code hook) monitors the shared pipeline directory for new/modified artifacts
+- [ ] When an agent writes an artifact, the watcher can trigger the next agent's Claude Code session immediately via `claude` CLI (instead of waiting for the next scheduled window)
+- [ ] Configurable: scheduled-only mode (cron via Claude Code scheduled tasks) or hybrid mode (scheduled + event-driven triggers)
 
 ### Context Summaries (new — not in OpenClaw)
-- [ ] When an agent completes work, the orchestrator generates a 2-3 sentence summary of what was produced and key decisions made
-- [ ] This summary is prepended to the downstream agent's prompt so it has the "why" alongside the "what"
-- [ ] Summaries stored in a `handoff-{slug}.md` or equivalent for traceability
+- [ ] Each agent's task prompt instructs it to write a `handoff-{slug}.md` summarizing what was produced and key decisions made
+- [ ] Downstream agents' task prompts instruct them to read `handoff-{slug}.md` for context on upstream work
+- [ ] Summaries stored in `handoff-{slug}.md` in the project directory for traceability
 
 ### Pipeline Quest (Skill Tracking)
 - [ ] XP events logged to `agent-events.jsonl` using the established XP table
@@ -114,7 +119,7 @@ This is not a redesign. The pipeline's conventions, state machines, and accumula
 - [ ] Stats viewable via the Pipeline Quest visualizer (existing React component or web dashboard)
 
 ### Telegram Integration
-- [ ] Coordinator sync messages delivered to Telegram using the Telegram Bot API directly (not OpenClaw's channel system)
+- [ ] Coordinator task prompt instructs Claude Code to run a lightweight Telegram delivery script (e.g., `scripts/telegram-send.sh`) after composing the sync message
 - [ ] Same format as current: `🔄 Pipeline Sync — {time} PT` with project status blocks and `⚠️ Needs Your Input` section
 - [ ] Escalation hygiene: only surface items where Nathan needs to act right now to unblock the pipeline (RULE-001)
 
@@ -131,40 +136,46 @@ This is not a redesign. The pipeline's conventions, state machines, and accumula
 ## Scope
 
 ### In Scope
-- Node.js orchestrator with Claude API integration
-- All 8 pipeline agents with full cron prompt logic ported from OpenClaw
-- Cron scheduling (node-cron or similar)
-- Event-driven handoff option (fs.watch)
-- Validation gates between stages
-- Context summaries in handoffs
+- **Claude Code scheduled tasks** as the execution engine for all 8 pipeline agents
+- Agent task prompts with full trigger logic, operating instructions, and output format requirements ported from OpenClaw
+- Scheduled task cron configuration (coordinator on even hours, agents on odd hours)
+- Optional event-driven handoff via file-watcher script + `claude` CLI
+- Validation logic (embedded in agent prompts and/or lightweight helper scripts)
+- Context summaries via handoff files (written by agents as part of their task)
 - Multi-phase project support
-- Review cycle and bug fix cycle state machines
+- Review cycle and bug fix cycle state machines (encoded in agent prompts)
 - Post-QA artifact freeze with patch files
-- Staleness detection
-- Pipeline Quest XP tracking
-- Telegram sync delivery (Telegram Bot API)
-- CLI for status, start, kick, stats, logs
-- PM2 or launchd daemon management
+- Staleness detection (coordinator prompt logic)
+- Pipeline Quest XP tracking (helper script called by agents)
+- Telegram sync delivery (helper script called by coordinator)
+- Lightweight CLI scripts for status, start, kick, stats, logs
+- Helper scripts for validation, XP logging, Telegram delivery
+- A shared `CLAUDE.md` encoding pipeline conventions and rules
 - Existing shared pipeline directory compatibility (all 11 project directories work as-is)
 
 ### Out of Scope
+- Self-hosted Node.js daemon or persistent service (replaced by Claude Code scheduled tasks)
+- Direct Claude API calls or `@anthropic-ai/sdk` usage (Claude Code handles model invocation)
+- PM2 or launchd daemon management (no daemon to manage)
+- Custom response parsing (`<<<WRITE_FILE>>>` markers — Claude Code writes files natively)
+- Custom conversation history management (Claude Code manages its own context)
 - Web UI dashboard (use existing Pipeline Quest React visualizer or Telegram)
 - Non-pipeline cron jobs (NBA pipeline, MLB pipeline, Pokémon tracker, morning briefing — these are separate systems)
-- Claude Code Agent Teams integration (future enhancement for parallel implementation)
 - Mobile app
 - Multi-user support
-- Authentication/authorization (runs locally on Nathan's Mac Mini behind Tailscale)
+- Authentication/authorization (runs locally on Nathan's machine)
 
 ---
 
 ## Technical Constraints
 
-- **Runtime:** Node.js (matches Nathan's existing stack and Mac Mini setup)
-- **Language:** TypeScript preferred
-- **API:** Claude API via `@anthropic-ai/sdk` — models: `claude-sonnet-4-6` (default), `claude-opus-4-6` (architect, reviewer), `claude-haiku-4-5` (validation gates)
+- **Execution engine:** Claude Code scheduled tasks (cloud or desktop) — no self-hosted daemon
+- **Agent invocation:** Claude Code handles model selection and invocation. Sonnet for most agents, Opus for architect and reviewer — configured per scheduled task.
+- **No API key required:** Agent runs are covered by the Claude plan. No `ANTHROPIC_API_KEY` needed for agent execution.
+- **Helper scripts:** Bash/Node.js scripts for validation, XP tracking, Telegram delivery, and CLI commands. These are lightweight utilities that Claude Code calls during agent runs.
 - **Storage:** Filesystem only — markdown files and JSONL logs (no database required)
-- **Deployment:** Mac Mini, managed by PM2 or launchd, behind Tailscale
-- **Telegram:** Telegram Bot API direct (bot token: existing, chat ID: existing)
+- **Deployment:** Claude Code scheduled tasks run on Anthropic infrastructure (cloud) or locally (desktop app). No PM2 or launchd needed.
+- **Telegram:** Telegram Bot API direct via helper script (bot token: existing, chat ID: existing)
 - **Existing data:** Must be backward-compatible with `/Users/wynclaw/.openclaw/shared/pipeline/` directory structure and all 11 project directories
 
 ---
@@ -172,19 +183,19 @@ This is not a redesign. The pipeline's conventions, state machines, and accumula
 ## Open Questions
 
 1. **Directory path:** Keep using `/Users/wynclaw/.openclaw/shared/pipeline/` for backward compatibility, or migrate to a new path like `~/pipeline/`? The old path works but ties the directory naming to a defunct tool.
-2. **Conversation history depth:** How many turns of conversation history to persist per agent? Full history burns tokens; too little loses context. Suggest: last 5 turns + system prompt, with full history available on demand.
-3. **Event-driven vs cron default:** Should the default mode be event-driven (immediate dispatch on file change) or cron (matching OpenClaw behavior)? Recommend: hybrid — events during active hours, cron as safety net.
-4. **Cost budget:** What's the acceptable daily API spend? Current OpenClaw usage hit Anthropic limits frequently. Validation gates on Haiku + event-driven handoffs should reduce waste, but need a target.
+2. **Cloud vs Desktop scheduled tasks:** Cloud tasks run on Anthropic infrastructure (machine doesn't need to be on, but gets a fresh clone — no local filesystem access). Desktop tasks run locally (full filesystem access, but machine must be running). The pipeline needs filesystem access to the shared pipeline directory — **desktop scheduled tasks or a synced repo** may be required.
+3. **Event-driven triggers:** Should event-driven handoffs be implemented? If so, a lightweight file-watcher daemon or Claude Code hook could trigger `claude` CLI runs on artifact changes. This adds some infrastructure but speeds up the pipeline.
+4. **Validation approach:** Should validation be purely prompt-based (agent self-validates), script-based (helper scripts check structure), or hybrid? Prompt-based is simplest but less deterministic. Script-based is reliable but requires maintenance.
 
 ---
 
 ## Dependencies
 
-- Anthropic API key with sufficient usage limits
-- Node.js 20+ on Mac Mini
-- PM2 (`npm install -g pm2`) for daemon management
+- **Claude Code** (CLI, Desktop app, or Web) with scheduled tasks capability
+- **Claude plan** with sufficient usage for scheduled task runs
 - Telegram Bot API (existing bot token and chat ID)
 - Existing shared pipeline directory with all project artifacts
+- `curl` or similar for Telegram delivery script (no additional runtime dependencies)
 
 ---
 

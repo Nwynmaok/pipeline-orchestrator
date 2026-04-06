@@ -1,211 +1,129 @@
 # Pipeline Orchestrator
 
-A self-hosted Node.js/TypeScript service that manages a multi-agent development pipeline using the Claude API. Replaces the OpenClaw-based pipeline with direct API calls, cron scheduling, event-driven handoffs, and validation gates.
+A multi-agent development pipeline powered by Claude Code scheduled tasks. Each pipeline agent runs as a scheduled Claude Code session that reads project state from the filesystem and writes artifacts directly.
 
-## Quick Start
+## Pipeline Directory
 
-```bash
-# Install dependencies
-npm install
+All project artifacts live in the shared pipeline directory configured in `config.yaml` (default: `/Users/wynclaw/.openclaw/shared/pipeline/`).
 
-# Build
-npm run build
+Each project is a subdirectory containing: TRACKER.md, PHASE.md, and artifact files (prd-*.md, tdd-*.md, impl-*.md, review-*.md, etc.).
 
-# Set environment variables
-export ANTHROPIC_API_KEY=sk-ant-...
-export TELEGRAM_BOT_TOKEN=...
+## How It Works
 
-# Start the daemon (foreground)
-npm start
+1. Claude Code scheduled task fires on cron schedule
+2. Agent reads pipeline directory, scans for projects, evaluates trigger conditions
+3. If work is found, agent reads relevant artifacts and does the work
+4. Agent writes output files directly to the project directory
+5. Agent runs `scripts/validate-artifact.sh` to validate output
+6. Agent writes `handoff-{slug}.md` for downstream context
+7. Agent runs `scripts/xp-log.sh` to log XP events
+8. Coordinator runs `scripts/telegram-send.sh` with sync message
 
-# Start the daemon (PM2 — survives reboots)
-pm2 start ecosystem.config.js
-```
+## Agent Schedule
 
-## CLI Commands
-
-All commands available via `npx pipeline <command>` or `node dist/cli/cli.js <command>`.
-
-```bash
-# Show pipeline dashboard (reads DASHBOARD.md)
-npx pipeline status
-
-# Create a new project — creates TRACKER.md + PHASE.md, triggers PM
-npx pipeline start my-new-project
-
-# Manually trigger an agent run (requires daemon running)
-npx pipeline kick backend
-npx pipeline kick reviewer --project restock-monitor
-
-# Show Pipeline Quest agent levels and XP
-npx pipeline stats
-
-# Show recent run history for an agent
-npx pipeline logs coordinator
-npx pipeline logs backend --lines 50
-
-# Show scheduled cron jobs and their status
-npx pipeline cron list
-```
-
-## Architecture
-
-### How a Pipeline Run Works
-
-1. **Cron tick** fires (coordinator on even hours, agents on odd hours)
-2. **Pipeline scanner** reads all project directories, builds a `PipelineState` snapshot
-3. **Dispatcher** evaluates trigger conditions for each agent against the state
-4. **Pre-check** (Haiku) confirms the agent has real work — skips if not
-5. **Agent runner** calls Claude API (Sonnet/Opus) with composed system prompt
-6. **Response parser** extracts `<<<WRITE_FILE>>>` / `<<<DELETE_FILE>>>` markers
-7. **Artifact ownership** enforced — agents can only write their own file types
-8. **Validation gate** (Haiku) checks structural requirements on new artifacts
-9. **Handoff summary** (Haiku) generates context for the downstream agent
-10. **XP tracking** logs events to `agent-events.jsonl`, rebuilds stats
-11. **Telegram delivery** sends coordinator sync messages to your phone
-
-### Scheduling
-
-| Schedule | Agents | Cron |
+| Agent | Cron (PT) | Model |
 |---|---|---|
-| Coordinator sync | coordinator | `0 0,12,14,16,18,20,22 * * *` PT |
-| Agent work cycle | pm, architect, backend, frontend, reviewer, qa | `0 13,15,17,19,21,23 * * *` PT |
+| coordinator | `0 0,12,14,16,18,20,22 * * *` | claude-sonnet-4-6 |
+| pm | `0 13,15,17,19,21,23 * * *` | claude-sonnet-4-6 |
+| architect | `0 13,15,17,19,21,23 * * *` | claude-opus-4-6 |
+| backend | `0 13,15,17,19,21,23 * * *` | claude-sonnet-4-6 |
+| frontend | `0 13,15,17,19,21,23 * * *` | claude-sonnet-4-6 |
+| reviewer | `0 13,15,17,19,21,23 * * *` | claude-opus-4-6 |
+| qa | `0 13,15,17,19,21,23 * * *` | claude-sonnet-4-6 |
+| devops | Manual only | claude-sonnet-4-6 |
 
-Active window: 12 PM – 12 AM Pacific daily. Three modes:
+Active window: 12 PM - 12 AM Pacific daily.
 
-- **cron** — OpenClaw-compatible polling on schedule
-- **event** — immediate dispatch on file change (chokidar)
-- **hybrid** (default) — events during active hours, cron as fallback
-
-### Agent Model Assignment
-
-| Agent | Model | Role |
-|---|---|---|
-| coordinator | claude-sonnet-4-6 | Sync tracker/dashboard, Telegram delivery |
-| pm | claude-sonnet-4-6 | Write PRDs and user stories |
-| architect | claude-opus-4-6 | Write TDDs and API specs |
-| backend | claude-sonnet-4-6 | Backend implementation |
-| frontend | claude-sonnet-4-6 | Frontend implementation |
-| reviewer | claude-opus-4-6 | Code review |
-| qa | claude-sonnet-4-6 | Test plans and bug reports |
-| devops | claude-sonnet-4-6 | Deploy plans (manual trigger only) |
-| (validation/pre-check) | claude-haiku-4-5 | Cheap structural checks |
-
-### Pipeline Stages
+## Pipeline Stages
 
 ```
-Requirements → Design → Implementation → Review → QA → Deploy → Complete
+Requirements -> Design -> Implementation -> Review -> QA -> Deploy -> Complete
      PM        Architect   Backend/Frontend  Reviewer  QA    DevOps
 ```
 
-Deploy is always manual — the coordinator flags Nathan when a project reaches deploy.
+Deploy is always manual -- the coordinator flags Nathan when a project reaches deploy.
 
-### Key Directories
+## Artifact Ownership
 
-| Path | Purpose |
-|---|---|
-| `/Users/wynclaw/.openclaw/shared/pipeline/` | Shared pipeline directory (all project artifacts) |
-| `./rules/` | Agent RULES.md files (injected into system prompts) |
-| `./data/conversations/` | Per-agent per-project conversation history (JSONL) |
-| `./data/run-log.jsonl` | Run log (every agent execution) |
-| `./config.yaml` | Main configuration file |
+Each agent may ONLY write the file types listed below. Do not write files outside your ownership.
 
-## Project Structure
+| Agent | Can Write | Can Delete |
+|---|---|---|
+| coordinator | TRACKER.md, DASHBOARD.md, PHASE.md, context-*.md, bugs-*.md (coordinator-tagged) | -- |
+| pm | prd-*.md, stories-*.md | needs-revision-prd-*.md (after processing) |
+| architect | tdd-*.md, api-*.md | needs-revision-tdd-*.md (after processing) |
+| backend | impl-backend-*.md, patch-*.md | -- |
+| frontend | impl-frontend-*.md, patch-*.md | -- |
+| reviewer | review-*.md | bugs-*.md, testplan-*.md (on bug-fix re-review approval) |
+| qa | testplan-*.md, bugs-*.md | -- |
+| devops | deploy-*.md, done-*.md | -- |
+| any agent | needs-clarification.md | -- |
 
-```
-src/
-├── index.ts                          # Daemon entry point
-├── config.ts                         # Config loader (config.yaml + env vars)
-├── types.ts                          # All TypeScript types
-│
-├── orchestrator/
-│   ├── orchestrator.ts               # Main run loop (scan → dispatch → run → validate → handoff)
-│   ├── dispatcher.ts                 # Agent trigger conditions (PipelineState → DispatchDecision[])
-│   └── pipeline-scanner.ts           # Scans pipeline dir, builds PipelineState snapshot
-│
-├── agents/
-│   ├── agent-runner.ts               # Claude API calls, response parsing, file operations
-│   ├── prompt-composer.ts            # 6-section system prompt assembly
-│   ├── conversation-store.ts         # JSONL conversation history
-│   └── prompts/                      # Per-agent prompt templates (ported from OpenClaw)
-│       ├── coordinator.ts
-│       ├── pm.ts
-│       ├── architect.ts
-│       ├── backend.ts
-│       ├── frontend.ts
-│       ├── reviewer.ts
-│       ├── qa.ts
-│       └── devops.ts
-│
-├── scheduler/
-│   ├── scheduler.ts                  # node-cron job management
-│   └── schedule-config.ts            # Cron expressions and schedule definitions
-│
-├── watcher/
-│   ├── file-watcher.ts               # Chokidar file monitoring
-│   └── event-dispatcher.ts           # File change → agent dispatch mapping
-│
-├── validator/
-│   ├── validator.ts                  # Validation gate orchestrator
-│   ├── pre-check.ts                  # "Is there work?" Haiku check
-│   └── gates/
-│       ├── prd-gate.ts               # PRD must have: Problem Statement, Goals, User Stories, AC, Scope
-│       ├── tdd-gate.ts               # TDD must reference PRD, have: Architecture, Data Model, API, Tasks
-│       ├── review-gate.ts            # Must contain exactly one valid verdict
-│       └── qa-gate.ts                # Test plan must trace to PRD acceptance criteria
-│
-├── state/
-│   ├── phase-manager.ts              # PHASE.md read/write, artifact suffix logic
-│   ├── artifact-resolver.ts          # Slug detection, phase-aware artifact filename resolution
-│   ├── review-cycle.ts               # Review verdict parsing, bug state parsing
-│   ├── staleness-detector.ts         # TDD vs impl timestamp comparison
-│   └── handoff-manager.ts            # Post-run context summaries via Haiku
-│
-├── quest/
-│   ├── xp-tracker.ts                 # Appends to agent-events.jsonl
-│   ├── stats-manager.ts              # Reads/writes agent-stats.json
-│   └── xp-table.ts                   # XP values per event type
-│
-├── telegram/
-│   └── telegram.ts                   # Telegram Bot API sendMessage
-│
-└── cli/
-    ├── cli.ts                        # Commander.js CLI entry
-    ├── ipc.ts                        # Unix socket IPC client
-    └── commands/
-        ├── status.ts                 # pipeline status
-        ├── start.ts                  # pipeline start <project>
-        ├── kick.ts                   # pipeline kick <agent>
-        ├── stats.ts                  # pipeline stats
-        ├── logs.ts                   # pipeline logs <agent>
-        └── cron.ts                   # pipeline cron list
-```
+Backend and frontend may also modify: review-*.md (to change verdict to ERS + append Engineer Response section), bugs-*.md (to mark bugs Fixed).
 
-## Configuration
+## Phase Conventions
 
-All settings in `config.yaml`. Environment variables are referenced as `${VAR_NAME}`.
+- Every project has a PHASE.md with `Current Phase: N`
+- Phase 1 artifacts use flat naming: `tdd-{slug}.md`
+- Phase 2+ artifacts use suffixed naming: `tdd-{slug}-phaseN.md`
+- Read PHASE.md FIRST on every run to determine current phase
+- Only the coordinator may increment PHASE.md
 
-Key settings:
-- `scheduling.mode`: `cron` | `event` | `hybrid` (default: hybrid)
-- `agents.<name>.model`: model per agent
-- `agents.<name>.timeoutMs`: API call timeout
-- `validation.enabled`: toggle Haiku validation gates
-- `precheck.enabled`: toggle Haiku pre-checks
+## Review Cycle
 
-## Cutover from OpenClaw
+Verdicts (exactly one per review file):
+- **Approved** -- QA proceeds
+- **Approved with Comments** -- minor non-blocking observations, QA proceeds
+- **Changes Requested** -- blocking issues, engineer must fix
+- **Engineer Response Submitted** -- engineer has addressed feedback, reviewer re-reviews
 
-1. Set `ANTHROPIC_API_KEY` and `TELEGRAM_BOT_TOKEN` environment variables
-2. `npm run build && pm2 start ecosystem.config.js`
-3. Run `./scripts/update-conventions.sh` to update XP logging instructions in CONVENTIONS.md
-4. OpenClaw cron jobs are already disabled (usage limits) — no conflict
+Flag sections (block engineer action, require Nathan):
+- `## Warning: TDD Issue -- Nathan Action Required` -- design flaw
+- `## Warning: PRD Issue -- Nathan Action Required` -- requirements flaw
 
-The orchestrator reads/writes the same pipeline directory (`/Users/wynclaw/.openclaw/shared/pipeline/`), uses the same artifact naming, same TRACKER.md/DASHBOARD.md formats, same XP event format. All 11 existing projects work as-is.
+## Bug Fix Cycle
 
-## Development
+1. QA files bugs in `bugs-{slug}.md`
+2. Engineer marks bugs as Fixed, updates review verdict to ERS
+3. Reviewer re-reviews: deletes `bugs-*.md` + `testplan-*.md`, writes fresh review
+4. If Approved, QA re-triggers
 
-```bash
-npm run build     # Compile TypeScript
-npm run dev       # Watch mode (recompile on changes)
-npm start         # Run the daemon
-npm run cli       # Run CLI directly
-```
+## Post-QA Artifact Freeze
+
+After QA passes, impl files are frozen. Any changes go in `patch-{slug}.md`.
+
+## Special Files
+
+- `needs-revision-prd-{slug}.md` -- Nathan-authored; PM picks up and revises PRD
+- `needs-revision-tdd-{slug}.md` -- Nathan-authored; Architect picks up and revises TDD
+- `needs-clarification.md` -- any agent writes when blocked; coordinator escalates to Nathan
+- `context-{slug}.md` -- coordinator-authored correction notes for a specific agent
+- `patch-{slug}.md` -- post-QA changes (frozen impl files)
+- `handoff-{slug}.md` -- upstream agent's context summary for downstream agent
+
+## Helper Scripts
+
+All scripts are in the `scripts/` directory. Run them after completing work:
+
+- `scripts/validate-artifact.sh <type> <file>` -- validate artifact structure (types: prd, tdd, review, qa)
+- `scripts/xp-log.sh <agent> <event> <project> "<note>"` -- log XP event
+- `scripts/xp-stats.sh` -- rebuild agent-stats.json from events
+- `scripts/telegram-send.sh "<message>"` -- send Telegram message (coordinator only)
+
+## XP Events
+
+| Event | XP | When |
+|---|---|---|
+| clean_pass_review | +25 | Review passes with Approved on first try |
+| clean_pass_qa | +30 | QA passes with no bugs on first try |
+| bug_found_by_reviewer | -10 | Reviewer finds bugs in implementation |
+| bug_found_by_qa | -15 | QA finds bugs after review passed |
+| rule_learned | +15 | Agent adds a new rule to RULES.md |
+| blocker_detected_early | +20 | Agent detects blocker before downstream |
+| successful_deploy | +35 | Project deployed successfully |
+| feature_implemented | +20 | Agent completes a feature implementation |
+| bug_fixed | +15 | Agent fixes a bug |
+
+## Agent Rules
+
+Each agent has learned rules in `rules/{agent}.md`. Read your rules file before starting work. Follow them to avoid repeating past mistakes.
