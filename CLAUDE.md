@@ -13,15 +13,16 @@ Each project is a subdirectory containing: TRACKER.md, PHASE.md, and artifact fi
 See **SETUP.md** for the full guide on configuring scheduled tasks and the Cowork full-cycle task in Claude Code Desktop.
 
 In short:
-1. Claude Code scheduled task fires on cron schedule (or run the Cowork full-cycle task to push projects through all stages at once)
-2. Agent reads pipeline directory, scans for projects, evaluates trigger conditions
-3. If work is found, agent reads relevant artifacts and does the work
-4. Agent writes output files directly to the project directory
-5. Agent runs `scripts/validate-artifact.sh` to validate output
-6. Agent writes `handoff-{slug}.md` for downstream context
-7. Agent runs `scripts/xp-log.sh` to log XP events
-8. Coordinator runs `scripts/telegram-send.sh` with sync message
-9. Telegram reply poller (`scripts/telegram-poll.sh`) runs every 5 minutes — when Nathan replies to a sync message, it writes `context-{slug}.md` to the relevant project, deletes `needs-clarification.md`, and confirms via Telegram
+1. `pipeline-scheduler-bootstrap` Desktop task fires daily at 11am, cleans up previous cron jobs, and registers all 8 agent tasks for the day via CronCreate
+2. Agent cron jobs fire on schedule (or run the Cowork full-cycle task to push projects through all stages at once)
+3. Agent reads pipeline directory, scans for projects, evaluates trigger conditions
+4. If work is found, agent reads relevant artifacts and does the work
+5. Agent writes output files directly to the project directory
+6. Agent runs `scripts/validate-artifact.sh` to validate output
+7. Agent writes `handoff-{slug}.md` for downstream context
+8. Agent runs `scripts/xp-log.sh` to log XP events
+9. Coordinator runs `scripts/telegram-send.sh` with sync message
+10. Telegram reply poller (`scripts/telegram-poll.sh`) runs every 5 minutes — when Nathan replies to a sync message, it writes `context-{slug}.md` to the relevant project, deletes `needs-clarification.md`, and confirms via Telegram
 
 ## CLI Scripts
 
@@ -46,8 +47,11 @@ scripts/pipeline-kick.sh <agent> [--project <project-name>]
 
 ## Agent Schedule
 
+All agent cron jobs are registered daily by the `pipeline-scheduler-bootstrap` Desktop task (see SETUP.md). The bootstrap fires at 11am PT, clears previous jobs, and creates fresh ones for the day.
+
 | Agent | Cron (PT) | Model |
 |---|---|---|
+| bootstrap | Daily at 11am (Desktop task) | claude-sonnet-4-6 |
 | coordinator | `0 0,12,14,16,18,20,22 * * *` | claude-sonnet-4-6 |
 | telegram-poll | `*/5 * * * *` | claude-sonnet-4-6 |
 | pm | `0 13,15,17,19,21,23 * * *` | claude-sonnet-4-6 |
