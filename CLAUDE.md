@@ -21,6 +21,7 @@ In short:
 6. Agent writes `handoff-{slug}.md` for downstream context
 7. Agent runs `scripts/xp-log.sh` to log XP events
 8. Coordinator runs `scripts/telegram-send.sh` with sync message
+9. Telegram reply poller (`scripts/telegram-poll.sh`) runs every 5 minutes — when Nathan replies to a sync message, it writes `context-{slug}.md` to the relevant project, deletes `needs-clarification.md`, and confirms via Telegram
 
 ## CLI Scripts
 
@@ -48,6 +49,7 @@ scripts/pipeline-kick.sh <agent> [--project <project-name>]
 | Agent | Cron (PT) | Model |
 |---|---|---|
 | coordinator | `0 0,12,14,16,18,20,22 * * *` | claude-sonnet-4-6 |
+| telegram-poll | `*/5 * * * *` | claude-sonnet-4-6 |
 | pm | `0 13,15,17,19,21,23 * * *` | claude-sonnet-4-6 |
 | architect | `0 13,15,17,19,21,23 * * *` | claude-opus-4-6 |
 | backend | `0 13,15,17,19,21,23 * * *` | claude-sonnet-4-6 |
@@ -81,6 +83,7 @@ Each agent may ONLY write the file types listed below. Do not write files outsid
 | reviewer | review-*.md | bugs-*.md, testplan-*.md (on bug-fix re-review approval) |
 | qa | testplan-*.md, bugs-*.md | -- |
 | devops | deploy-*.md, done-*.md | -- |
+| telegram-poll | context-*.md | needs-clarification.md |
 | any agent | needs-clarification.md | -- |
 
 Backend and frontend may also modify: review-*.md (to change verdict to ERS + append Engineer Response section), bugs-*.md (to mark bugs Fixed).
@@ -133,6 +136,7 @@ All scripts are in the `scripts/` directory. Run them after completing work:
 - `scripts/xp-log.sh <agent> <event> <project> "<note>"` -- log XP event
 - `scripts/xp-stats.sh` -- rebuild agent-stats.json from events
 - `scripts/telegram-send.sh "<message>"` -- send Telegram message (coordinator only)
+- `scripts/telegram-poll.sh` -- poll for Telegram replies, resolve needs-clarification files (runs on 5-min schedule)
 
 ## XP Events
 

@@ -21,6 +21,10 @@ Read and follow all rules in `rules/coordinator.md` before starting work.
 
 Run your even-hour sync. Do all analysis internally, then produce outputs.
 
+### Step 0: Check for Resolved Clarifications
+
+Before scanning pipeline state, note that `scripts/telegram-poll.sh` runs on a separate 5-minute schedule and may have resolved needs-clarification files since your last sync. Any newly created `context-{slug}.md` files (with a missing corresponding `needs-clarification.md`) indicate a reply was processed. Reflect this in your sync message — e.g. "clarification received, pipeline unblocked."
+
 ### Step 1: Scan Pipeline State
 
 Read the pipeline directory configured in `config.yaml` (the `pipeline.dir` value). List all project subdirectories. For each project:
