@@ -115,6 +115,23 @@ DevOps is manual-only. When the coordinator flags a project as ready for deploy,
 ./scripts/pipeline-kick.sh devops --project <project-name>
 ```
 
+## Step 2b: Cowork Full Cycle Task (Optional)
+
+In addition to the scheduled tasks, you can set up a **Cowork task** that runs the entire pipeline in one shot — all agents in stage order, in a single autonomous session. This is useful when you want to push a project through multiple stages without waiting for hourly cron ticks.
+
+1. Open the **Cowork** tab in Claude Desktop (alongside Chat and Code)
+2. Create a new task with the contents of `prompts/cowork-full-cycle.md`
+3. Save it for reuse
+
+**When to use it:**
+- You just created a new project and want it to go from intake notes through PRD, TDD, impl, review, and QA immediately
+- Multiple projects have been sitting idle and you want to flush the whole pipeline
+- You're actively iterating on a project and don't want to wait for the next cron window
+
+**When NOT to use it:**
+- For routine daily operation — the scheduled tasks handle that automatically
+- When you only need one agent to run — use `./scripts/pipeline-kick.sh <agent>` instead
+
 ## Step 3: First Run Test
 
 After creating all 7 tasks:
