@@ -1,0 +1,68 @@
+anthropic:
+  apiKey: ${ANTHROPIC_API_KEY}
+
+pipeline:
+  dir: /Users/wynclaw/.openclaw/shared/pipeline
+  conventionsFile: CONVENTIONS.md
+
+data:
+  dir: ./data
+  rulesDir: ./rules
+
+agents:
+  coordinator:
+    model: claude-sonnet-4-6
+    maxConversationTurns: 5
+    timeoutMs: 900000
+  pm:
+    model: claude-sonnet-4-6
+    maxConversationTurns: 5
+    timeoutMs: 600000
+  architect:
+    model: claude-opus-4-6
+    maxConversationTurns: 5
+    timeoutMs: 900000
+  frontend:
+    model: claude-sonnet-4-6
+    maxConversationTurns: 5
+    timeoutMs: 600000
+  backend:
+    model: claude-sonnet-4-6
+    maxConversationTurns: 5
+    timeoutMs: 600000
+  reviewer:
+    model: claude-opus-4-6
+    maxConversationTurns: 5
+    timeoutMs: 900000
+  qa:
+    model: claude-sonnet-4-6
+    maxConversationTurns: 5
+    timeoutMs: 600000
+  devops:
+    model: claude-sonnet-4-6
+    maxConversationTurns: 3
+    timeoutMs: 300000
+
+scheduling:
+  mode: hybrid
+  timezone: America/Los_Angeles
+  activeHours:
+    start: 12
+    end: 0
+  coordinator:
+    cron: "0 0,12,14,16,18,20,22 * * *"
+  agents:
+    cron: "0 13,15,17,19,21,23 * * *"
+  eventThrottleMs: 300000
+
+telegram:
+  botToken: ${TELEGRAM_BOT_TOKEN}
+  chatId: "8153891546"
+
+validation:
+  enabled: true
+  model: claude-haiku-4-5
+
+precheck:
+  enabled: true
+  model: claude-haiku-4-5
