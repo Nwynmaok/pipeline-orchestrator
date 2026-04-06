@@ -32,34 +32,37 @@ python3 << PYEOF
 import json
 
 with open("$STATS_FILE") as f:
-    stats = json.load(f)
+    raw = json.load(f)
+
+# Support both formats: {agents: {...}} wrapper or flat {agent: {...}}
+if isinstance(raw, dict) and "agents" in raw:
+    stats = raw["agents"]
+else:
+    stats = raw
 
 for agent, data in sorted(stats.items()):
     level = data.get("level", 1)
-    xp = data.get("totalXp", 0)
-    next_level_xp = (level + 1) * 100
-
-    # Calculate XP into current level
-    cumulative = 0
-    for l in range(1, level):
-        cumulative += (l + 1) * 100
-    xp_in_level = xp - cumulative
-    xp_needed = next_level_xp
+    xp = data.get("xp", data.get("totalXp", 0))
+    xp_to_next = data.get("xpToNext", (level + 1) * 100)
 
     bar_len = 20
-    filled = min(bar_len, int(bar_len * max(0, xp_in_level) / max(1, xp_needed)))
+    filled = min(bar_len, int(bar_len * max(0, xp) / max(1, xp + xp_to_next)))
     bar = "#" * filled + "-" * (bar_len - filled)
 
-    attrs = data.get("attributes", {})
+    agent_class = data.get("class", "")
+    attrs = data.get("stats", data.get("attributes", {}))
     skills = data.get("skills", {})
 
-    print(f"  {agent.upper()} (Level {level})")
-    print(f"  XP: {xp} [{bar}] {xp_in_level}/{xp_needed} to next")
+    header = f"  {agent.upper()} (Level {level})"
+    if agent_class:
+        header += f" - {agent_class}"
+    print(header)
+    print(f"  XP: {xp} [{bar}] {xp_to_next} to next")
     if attrs:
         attr_str = " | ".join(f"{k.upper()}:{v}" for k, v in sorted(attrs.items()))
         print(f"  {attr_str}")
     if skills:
-        skill_str = ", ".join(f"{k}({v})" for k, v in sorted(skills.items()))
+        skill_str = ", ".join(f"{k}({v.get('rank', v) if isinstance(v, dict) else v})" for k, v in sorted(skills.items()))
         print(f"  Skills: {skill_str}")
     print()
 PYEOF
