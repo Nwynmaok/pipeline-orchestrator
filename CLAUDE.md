@@ -10,7 +10,10 @@ Each project is a subdirectory containing: TRACKER.md, PHASE.md, and artifact fi
 
 ## How It Works
 
-1. Claude Code scheduled task fires on cron schedule
+See **SETUP.md** for the full guide on configuring scheduled tasks and the Cowork full-cycle task in Claude Code Desktop.
+
+In short:
+1. Claude Code scheduled task fires on cron schedule (or run the Cowork full-cycle task to push projects through all stages at once)
 2. Agent reads pipeline directory, scans for projects, evaluates trigger conditions
 3. If work is found, agent reads relevant artifacts and does the work
 4. Agent writes output files directly to the project directory
@@ -18,6 +21,27 @@ Each project is a subdirectory containing: TRACKER.md, PHASE.md, and artifact fi
 6. Agent writes `handoff-{slug}.md` for downstream context
 7. Agent runs `scripts/xp-log.sh` to log XP events
 8. Coordinator runs `scripts/telegram-send.sh` with sync message
+
+## CLI Scripts
+
+Shell scripts for monitoring and manual control. Run from the repo root.
+
+```bash
+# Show pipeline dashboard (reads DASHBOARD.md)
+scripts/pipeline-status.sh
+
+# Show Pipeline Quest agent levels and XP
+scripts/pipeline-stats.sh
+
+# Show recent run history for an agent
+scripts/pipeline-logs.sh [agent] [--lines N]
+
+# Create a new project
+scripts/pipeline-start.sh <project-name>
+
+# Manually trigger an agent run
+scripts/pipeline-kick.sh <agent> [--project <project-name>]
+```
 
 ## Agent Schedule
 
