@@ -7,126 +7,53 @@ This guide walks you through configuring the pipeline orchestrator as Claude Cod
 - [ ] Claude Code Desktop app installed and signed in to your Claude plan
 - [ ] This repo cloned to your Mac Mini (e.g., `/Users/wynclaw/projects/pipeline-orchestrator`)
 - [ ] Pipeline directory exists at `/Users/wynclaw/.openclaw/shared/pipeline/` with your 11 projects
-- [ ] `TELEGRAM_BOT_TOKEN` environment variable set (for coordinator Telegram delivery)
+- [ ] `TELEGRAM_BOT_TOKEN` added to `~/.claude/settings.json` under `"env"` (required for Telegram delivery in scheduled task context)
 
 ## Step 1: Open Claude Code Desktop
 
 Launch the Claude Code Desktop app on your Mac Mini. This app needs to stay running — it replaces PM2 as the always-on process that manages scheduling.
 
-## Step 2: Create Scheduled Tasks
+## Step 2: Create the Bootstrap Scheduled Task
 
-Open the **Schedule** tab in the sidebar, then create each of the 7 tasks below. For each task:
+The pipeline uses a **bootstrap** approach: one durable Desktop task fires daily at 11am, clears any leftover cron jobs from previous days, and registers all 8 agent tasks fresh for the current session.
 
-1. Click **New task** -> **New local task**
-2. Fill in the fields as specified
-3. Set the **Working Folder** to this repo's directory (e.g., `/Users/wynclaw/projects/pipeline-orchestrator`)
-4. Set the **Model** using the model selector in the prompt input
-5. Set **Permission Mode** to **Auto** (agents need to read/write files and run scripts without prompting)
-6. Copy the prompt from the specified file in `prompts/`
+> **Why bootstrap instead of 8 direct Desktop tasks?**
+> The Desktop UI's custom cron option requires describing the schedule in natural language and doesn't expose raw cron expressions. The bootstrap works around this by using Claude Code's `CronCreate` tool to register jobs with exact cron syntax at runtime.
 
-### Task 1: Pipeline Coordinator
+Create a single task in the **Schedule** tab:
+
+1. Click **New task** → **New local task**
+2. Fill in the fields:
 
 | Field | Value |
 |---|---|
-| Name | pipeline-coordinator |
-| Description | Even-hour sync: scan projects, update tracker/dashboard, send Telegram |
+| Name | `pipeline-scheduler-bootstrap` |
+| Description | Daily bootstrap: clear old pipeline cron jobs and register 8 fresh agent tasks |
 | Model | claude-sonnet-4-6 |
-| Frequency | Custom — ask Claude: "every 2 hours from 12pm to midnight PT" or set cron `0 0,12,14,16,18,20,22 * * *` |
+| Frequency | Daily — 11am (before the active window starts at noon) |
 | Working Folder | `/Users/wynclaw/projects/pipeline-orchestrator` |
 | Permission Mode | Auto |
-| Prompt | Contents of `prompts/coordinator.md` |
+| Prompt | Contents of `prompts/bootstrap.md` |
 
-### Task 2: Pipeline PM
+When the bootstrap fires, it:
+1. Calls `CronList` and deletes any existing pipeline cron jobs (prevents duplicates if Desktop stays open across days)
+2. Reads each `prompts/*.md` file and registers all 8 agent tasks via `CronCreate`
+3. Confirms with a summary of jobs created
 
-| Field | Value |
-|---|---|
-| Name | pipeline-pm |
-| Description | Write PRDs and user stories from intake notes |
-| Model | claude-sonnet-4-6 |
-| Frequency | Custom — "odd hours from 1pm to 11pm PT" or cron `0 13,15,17,19,21,23 * * *` |
-| Working Folder | `/Users/wynclaw/projects/pipeline-orchestrator` |
-| Permission Mode | Auto |
-| Prompt | Contents of `prompts/pm.md` |
+### Agent Tasks (registered by bootstrap, not created manually)
 
-### Task 3: Pipeline Architect
+The bootstrap registers these 8 tasks automatically:
 
-| Field | Value |
-|---|---|
-| Name | pipeline-architect |
-| Description | Write TDDs and API specs from PRDs |
-| Model | **claude-opus-4-6** |
-| Frequency | Custom — same as PM: `0 13,15,17,19,21,23 * * *` |
-| Working Folder | `/Users/wynclaw/projects/pipeline-orchestrator` |
-| Permission Mode | Auto |
-| Prompt | Contents of `prompts/architect.md` |
-
-### Task 4: Pipeline Backend
-
-| Field | Value |
-|---|---|
-| Name | pipeline-backend |
-| Description | Backend implementation, review fixes, bug fixes |
-| Model | claude-sonnet-4-6 |
-| Frequency | Custom — same as PM: `0 13,15,17,19,21,23 * * *` |
-| Working Folder | `/Users/wynclaw/projects/pipeline-orchestrator` |
-| Permission Mode | Auto |
-| Prompt | Contents of `prompts/backend.md` |
-
-### Task 5: Pipeline Frontend
-
-| Field | Value |
-|---|---|
-| Name | pipeline-frontend |
-| Description | Frontend implementation, review fixes, bug fixes |
-| Model | claude-sonnet-4-6 |
-| Frequency | Custom — same as PM: `0 13,15,17,19,21,23 * * *` |
-| Working Folder | `/Users/wynclaw/projects/pipeline-orchestrator` |
-| Permission Mode | Auto |
-| Prompt | Contents of `prompts/frontend.md` |
-
-### Task 6: Pipeline Reviewer
-
-| Field | Value |
-|---|---|
-| Name | pipeline-reviewer |
-| Description | Code review, re-review after fixes, bug-fix re-review |
-| Model | **claude-opus-4-6** |
-| Frequency | Custom — same as PM: `0 13,15,17,19,21,23 * * *` |
-| Working Folder | `/Users/wynclaw/projects/pipeline-orchestrator` |
-| Permission Mode | Auto |
-| Prompt | Contents of `prompts/reviewer.md` |
-
-### Task 7: Pipeline QA
-
-| Field | Value |
-|---|---|
-| Name | pipeline-qa |
-| Description | Test plans and bug reports against PRD acceptance criteria |
-| Model | claude-sonnet-4-6 |
-| Frequency | Custom — same as PM: `0 13,15,17,19,21,23 * * *` |
-| Working Folder | `/Users/wynclaw/projects/pipeline-orchestrator` |
-| Permission Mode | Auto |
-| Prompt | Contents of `prompts/qa.md` |
-
-### Task 8: Telegram Reply Poller
-
-| Field | Value |
-|---|---|
-| Name | pipeline-telegram-poll |
-| Description | Poll Telegram for Nathan's replies, resolve needs-clarification files |
-| Model | claude-sonnet-4-6 |
-| Frequency | Custom — every 5 minutes: `*/5 * * * *` |
-| Working Folder | `/Users/wynclaw/projects/pipeline-orchestrator` |
-| Permission Mode | Auto |
-| Prompt | Contents of `prompts/telegram-poll.md` |
-
-This task polls Telegram for replies to sync messages. When Nathan replies with a clarification:
-1. The script identifies which project has a `needs-clarification.md`
-2. Writes Nathan's reply to `context-{slug}.md` in that project directory
-3. Deletes `needs-clarification.md` to unblock the pipeline
-4. Sends a confirmation message back to Telegram
-
-If multiple projects need clarification, the bot asks Nathan which project the reply is for.
+| Agent | Cron (PT) | Model | Prompt File |
+|---|---|---|---|
+| pipeline-coordinator | `0 0,12,14,16,18,20,22 * * *` | claude-sonnet-4-6 | `prompts/coordinator.md` |
+| pipeline-pm | `0 13,15,17,19,21,23 * * *` | claude-sonnet-4-6 | `prompts/pm.md` |
+| pipeline-architect | `0 13,15,17,19,21,23 * * *` | claude-opus-4-6 | `prompts/architect.md` |
+| pipeline-backend | `0 13,15,17,19,21,23 * * *` | claude-sonnet-4-6 | `prompts/backend.md` |
+| pipeline-frontend | `0 13,15,17,19,21,23 * * *` | claude-sonnet-4-6 | `prompts/frontend.md` |
+| pipeline-reviewer | `0 13,15,17,19,21,23 * * *` | claude-opus-4-6 | `prompts/reviewer.md` |
+| pipeline-qa | `0 13,15,17,19,21,23 * * *` | claude-sonnet-4-6 | `prompts/qa.md` |
+| pipeline-telegram-poll | `*/5 * * * *` | claude-sonnet-4-6 | `prompts/telegram-poll.md` |
 
 ### DevOps (no scheduled task)
 
@@ -134,6 +61,10 @@ DevOps is manual-only. When the coordinator flags a project as ready for deploy,
 ```bash
 ./scripts/pipeline-kick.sh devops --project <project-name>
 ```
+
+### Updating Prompts
+
+To update an agent's prompt, edit the file in `prompts/`. The change takes effect the next time the bootstrap runs (next day at 11am), or immediately if you **Run now** the bootstrap task to re-register jobs.
 
 ## Step 2b: Cowork Full Cycle Task (Optional)
 
@@ -183,7 +114,7 @@ Each task runs in Auto mode, but the first run may encounter new tool permission
 - **Staggering**: Desktop applies a 0-10 minute random offset per task to avoid API traffic spikes. All 6 work agents firing at the same odd hour will be spread across a ~10 minute window.
 - **Sleep handling**: If your Mac Mini goes to sleep and misses a scheduled run, Desktop will catch up with one run when it wakes (within 7 days). Older misses are skipped.
 - **Missed runs are fine**: Agents are idempotent — they scan for work each run. Missing a run just means the work gets picked up on the next one.
-- **Updating prompts**: Edit the files in `prompts/` in this repo, then update the task prompt in the Desktop app (or edit `~/.claude/scheduled-tasks/<task-name>/SKILL.md` directly).
+- **Updating prompts**: Edit the files in `prompts/` in this repo. Changes take effect the next time the bootstrap runs. To apply immediately, hit **Run now** on the bootstrap task — it will clear old jobs and re-register with the updated prompts.
 - **Pausing**: Toggle the repeat off on any task to pause it without deleting. Toggle back on to resume.
 
 ## Troubleshooting
@@ -195,7 +126,7 @@ Each task runs in Auto mode, but the first run may encounter new tool permission
 - Check that the pipeline directory exists and contains project subdirectories
 
 **Telegram not sending:**
-- Verify `TELEGRAM_BOT_TOKEN` is set in your shell environment
+- Verify `TELEGRAM_BOT_TOKEN` is set in `~/.claude/settings.json` under `"env"` (shell env vars are not inherited by scheduled tasks)
 - Test manually: `./scripts/telegram-send.sh "test message"`
 
 **Scripts fail with permission denied:**
